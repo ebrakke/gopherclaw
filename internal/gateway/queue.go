@@ -1,0 +1,108 @@
+package gateway
+
+import (
+	"context"
+	"fmt"
+	"sync"
+
+	"golang.org/x/sync/semaphore"
+
+	"github.com/user/gopherclaw/internal/types"
+)
+
+// Queue manages per-session lanes with a global concurrency semaphore.
+// Each session gets its own FIFO channel (lane) so that runs within a
+// session are processed sequentially, while the semaphore limits the
+// total number of concurrent run processors across all sessions.
+type Queue struct {
+	lanes     map[types.SessionID]chan *Run
+	semaphore *semaphore.Weighted
+	processor func(*Run) error
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	mu     sync.RWMutex
+}
+
+// NewQueue creates a Queue that allows up to maxConcurrent runs to execute
+// simultaneously across all session lanes.
+func NewQueue(maxConcurrent int64) *Queue {
+	return &Queue{
+		lanes:     make(map[types.SessionID]chan *Run),
+		semaphore: semaphore.NewWeighted(maxConcurrent),
+	}
+}
+
+// Start initialises the queue's context. Must be called before Enqueue.
+func (q *Queue) Start(ctx context.Context) {
+	q.ctx, q.cancel = context.WithCancel(ctx)
+}
+
+// Stop cancels the queue context, closes all lanes, and waits for in-flight
+// processors to finish.
+func (q *Queue) Stop() {
+	if q.cancel != nil {
+		q.cancel()
+	}
+	q.mu.Lock()
+	for _, lane := range q.lanes {
+		close(lane)
+	}
+	q.mu.Unlock()
+	q.wg.Wait()
+}
+
+// Enqueue adds a Run to the session's lane, creating the lane (and its
+// goroutine) on first use. Returns an error if the lane's buffer is full.
+func (q *Queue) Enqueue(run *Run) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	lane, exists := q.lanes[run.SessionID]
+	if !exists {
+		lane = make(chan *Run, 100)
+		q.lanes[run.SessionID] = lane
+		q.wg.Add(1)
+		go q.processLane(run.SessionID, lane)
+	}
+
+	select {
+	case lane <- run:
+		return nil
+	default:
+		return fmt.Errorf("queue full for session %s", run.SessionID)
+	}
+}
+
+// processLane drains a single session lane, acquiring a semaphore slot
+// before dispatching each run to the processor.
+func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
+	defer q.wg.Done()
+	for {
+		select {
+		case run, ok := <-lane:
+			if !ok {
+				return
+			}
+			if err := q.semaphore.Acquire(q.ctx, 1); err != nil {
+				return
+			}
+			q.wg.Add(1)
+			go func() {
+				defer q.wg.Done()
+				defer q.semaphore.Release(1)
+				if q.processor != nil {
+					q.processor(run)
+				}
+			}()
+		case <-q.ctx.Done():
+			return
+		}
+	}
+}
+
+// SetProcessor sets the function invoked for each dequeued Run.
+func (q *Queue) SetProcessor(fn func(*Run) error) {
+	q.processor = fn
+}

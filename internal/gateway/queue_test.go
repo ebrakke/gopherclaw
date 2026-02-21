@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -45,8 +46,8 @@ func TestQueueConcurrency(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	if maxSeen > 2 {
-		t.Errorf("expected max 2 concurrent, saw %d", maxSeen)
+	if m := atomic.LoadInt32(&maxSeen); m > 2 {
+		t.Errorf("expected max 2 concurrent, saw %d", m)
 	}
 }
 
@@ -85,12 +86,16 @@ func TestQueueSameSessionOrdering(t *testing.T) {
 	queue.Start(ctx)
 	defer queue.Stop()
 
+	var mu sync.Mutex
 	var order []int
 	done := make(chan struct{})
 
 	queue.SetProcessor(func(run *Run) error {
+		mu.Lock()
 		order = append(order, run.Attempts) // reuse Attempts as sequence marker
-		if len(order) == 3 {
+		n := len(order)
+		mu.Unlock()
+		if n == 3 {
 			close(done)
 		}
 		return nil
@@ -115,6 +120,8 @@ func TestQueueSameSessionOrdering(t *testing.T) {
 		t.Fatal("timed out waiting for runs to process")
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
 	for i, v := range order {
 		if v != i {
 			t.Errorf("expected order[%d] = %d, got %d", i, i, v)

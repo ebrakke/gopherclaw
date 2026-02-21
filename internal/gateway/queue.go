@@ -76,7 +76,9 @@ func (q *Queue) Enqueue(run *Run) error {
 }
 
 // processLane drains a single session lane, acquiring a semaphore slot
-// before dispatching each run to the processor.
+// before running the processor synchronously. This ensures strict FIFO
+// ordering within a session while the semaphore limits cross-session
+// parallelism.
 func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 	defer q.wg.Done()
 	for {
@@ -88,14 +90,10 @@ func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 			if err := q.semaphore.Acquire(q.ctx, 1); err != nil {
 				return
 			}
-			q.wg.Add(1)
-			go func() {
-				defer q.wg.Done()
-				defer q.semaphore.Release(1)
-				if q.processor != nil {
-					q.processor(run)
-				}
-			}()
+			if q.processor != nil {
+				q.processor(run)
+			}
+			q.semaphore.Release(1)
 		case <-q.ctx.Done():
 			return
 		}

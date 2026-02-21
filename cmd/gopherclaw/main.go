@@ -32,7 +32,7 @@ func main() {
 	events := state.NewEventStore(cfg.DataDir)
 	artifacts := state.NewArtifactStore(cfg.DataDir)
 
-	gw := gateway.New(sessions, events, artifacts)
+	gw := gateway.New(sessions, events, artifacts, int64(cfg.MaxConcurrent))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

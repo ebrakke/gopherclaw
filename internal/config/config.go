@@ -30,14 +30,6 @@ func Load(path string) (*Config, error) {
 	cfg.LLM.MaxTokens = 2000
 	cfg.LLM.Temperature = 0.7
 
-	// Override from env
-	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-		cfg.LLM.APIKey = apiKey
-	}
-	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
-		cfg.LLM.BaseURL = baseURL
-	}
-
 	// Load from file if exists
 	if _, err := os.Stat(path); err == nil {
 		data, err := os.ReadFile(path)
@@ -47,6 +39,14 @@ func Load(path string) (*Config, error) {
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, err
 		}
+	}
+
+	// Override from env (highest precedence)
+	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		cfg.LLM.APIKey = apiKey
+	}
+	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
+		cfg.LLM.BaseURL = baseURL
 	}
 
 	return cfg, nil

@@ -22,14 +22,18 @@ type Gateway struct {
 	wg     sync.WaitGroup
 }
 
-// New creates a Gateway wired to the provided stores.
-// The default concurrency limit is 2 and the default retry policy is applied.
-func New(sessions types.SessionStore, events types.EventStore, artifacts types.ArtifactStore) *Gateway {
+// New creates a Gateway wired to the provided stores with the given
+// concurrency limit for simultaneous run processing.
+func New(sessions types.SessionStore, events types.EventStore, artifacts types.ArtifactStore, maxConcurrent ...int64) *Gateway {
+	var concurrency int64 = 2
+	if len(maxConcurrent) > 0 && maxConcurrent[0] > 0 {
+		concurrency = maxConcurrent[0]
+	}
 	return &Gateway{
 		sessions:  sessions,
 		events:    events,
 		artifacts: artifacts,
-		Queue:     NewQueue(2),
+		Queue:     NewQueue(concurrency),
 		retry:     DefaultRetryPolicy(),
 	}
 }

@@ -91,6 +91,7 @@ func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 				return
 			}
 			if q.processor != nil {
+				run.Ctx = q.ctx
 				q.processor(run)
 			}
 			q.semaphore.Release(1)

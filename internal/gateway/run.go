@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"time"
 
 	"github.com/user/gopherclaw/internal/types"
@@ -28,6 +29,7 @@ type Run struct {
 	EndedAt    *time.Time
 	Error      error
 	OnComplete func(response string)
+	Ctx        context.Context
 }
 
 // NewRun creates a Run in the Queued state for the given session and event.

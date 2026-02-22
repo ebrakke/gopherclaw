@@ -65,12 +65,12 @@ func (e *Engine) BuildPrompt(
 	// 70% for events, 10% safety margin (20% artifact budget unused for now)
 	eventBudget := int(float64(remaining) * 0.7)
 
-	// 2. Convert events to messages, respecting budget
+	// 2. Convert events to messages, walking newest-first to prioritize recent context
 	var eventMessages []llm.Message
 	usedTokens := 0
 
-	for _, event := range events {
-		msg, err := eventToMessage(event)
+	for i := len(events) - 1; i >= 0; i-- {
+		msg, err := eventToMessage(events[i])
 		if err != nil {
 			continue
 		}
@@ -89,7 +89,11 @@ func (e *Engine) BuildPrompt(
 		usedTokens += msgTokens
 	}
 
-	// 3. Assemble: system + events (already in chronological order)
+	// 3. Reverse to chronological order and assemble
+	for i, j := 0, len(eventMessages)-1; i < j; i, j = i+1, j-1 {
+		eventMessages[i], eventMessages[j] = eventMessages[j], eventMessages[i]
+	}
+
 	messages := make([]llm.Message, 0, 1+len(eventMessages))
 	messages = append(messages, llm.Message{Role: "system", Content: sysPrompt})
 	messages = append(messages, eventMessages...)

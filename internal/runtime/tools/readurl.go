@@ -64,7 +64,7 @@ func (r *ReadURL) Execute(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("HTTP error: status %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReadURLChars*2))
 	if err != nil {
 		return "", fmt.Errorf("read body: %w", err)
 	}

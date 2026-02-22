@@ -89,6 +89,15 @@ func (a *Adapter) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		a.sendResponse(chatID, "Hello! I'm Gopherclaw, your AI assistant. Send me a message to get started.")
 
 	case "new":
+		key := buildSessionKey(msg.From.ID, msg.Chat.ID)
+		sid, err := a.sessions.ResolveOrCreate(ctx, key, "default")
+		if err == nil {
+			session, err := a.sessions.Get(ctx, sid)
+			if err == nil {
+				session.Status = "archived"
+				a.sessions.Update(ctx, session)
+			}
+		}
 		a.sendResponse(chatID, "Starting a new session. Previous conversation has been archived.")
 
 	case "status":

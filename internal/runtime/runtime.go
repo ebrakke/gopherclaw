@@ -49,7 +49,10 @@ const artifactThreshold = 2000
 // ProcessRun executes the agentic turn loop for a single run.
 // This is the function passed to Queue.SetProcessor.
 func (rt *Runtime) ProcessRun(run *gateway.Run) error {
-	ctx := context.Background()
+	ctx := run.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// 1. Record user_message event
 	userPayload, _ := json.Marshal(map[string]string{"text": run.Event.Text})
@@ -187,5 +190,15 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 		return nil
 	}
 
+	errPayload, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("max tool rounds (%d) exceeded", rt.maxRounds)})
+	rt.events.Append(ctx, &types.Event{
+		ID:        types.NewEventID(),
+		SessionID: run.SessionID,
+		RunID:     run.ID,
+		Type:      "error",
+		Source:    "runtime",
+		At:        time.Now(),
+		Payload:   errPayload,
+	})
 	return fmt.Errorf("max tool rounds (%d) exceeded", rt.maxRounds)
 }

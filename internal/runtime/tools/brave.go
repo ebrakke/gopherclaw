@@ -91,7 +91,7 @@ func (b *BraveSearch) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB limit
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}

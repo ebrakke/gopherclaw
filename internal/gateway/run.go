@@ -18,15 +18,16 @@ const (
 
 // Run tracks a single execution of an inbound event against a session.
 type Run struct {
-	ID        types.RunID
-	SessionID types.SessionID
-	Event     *types.InboundEvent
-	Status    RunStatus
-	Attempts  int
-	CreatedAt time.Time
-	StartedAt *time.Time
-	EndedAt   *time.Time
-	Error     error
+	ID         types.RunID
+	SessionID  types.SessionID
+	Event      *types.InboundEvent
+	Status     RunStatus
+	Attempts   int
+	CreatedAt  time.Time
+	StartedAt  *time.Time
+	EndedAt    *time.Time
+	Error      error
+	OnComplete func(response string)
 }
 
 // NewRun creates a Run in the Queued state for the given session and event.

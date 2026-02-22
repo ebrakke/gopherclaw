@@ -54,13 +54,24 @@ func (g *Gateway) Stop() {
 	g.wg.Wait()
 }
 
+// RunOption configures optional behavior on a Run.
+type RunOption func(*Run)
+
+// WithOnComplete sets a callback invoked when the run produces a final response.
+func WithOnComplete(fn func(string)) RunOption {
+	return func(r *Run) { r.OnComplete = fn }
+}
+
 // HandleInbound resolves or creates a session for the event, wraps it in a
 // Run, and enqueues it for processing.
-func (g *Gateway) HandleInbound(ctx context.Context, event *types.InboundEvent) error {
+func (g *Gateway) HandleInbound(ctx context.Context, event *types.InboundEvent, opts ...RunOption) error {
 	sessionID, err := g.sessions.ResolveOrCreate(ctx, event.SessionKey, "default")
 	if err != nil {
 		return fmt.Errorf("resolve session: %w", err)
 	}
 	run := NewRun(sessionID, event)
+	for _, opt := range opts {
+		opt(run)
+	}
 	return g.Queue.Enqueue(run)
 }

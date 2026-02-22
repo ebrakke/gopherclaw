@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,5 +111,57 @@ func TestGatewayDifferentSessions(t *testing.T) {
 	}
 	if len(sessionList) != 2 {
 		t.Errorf("expected 2 sessions, got %d", len(sessionList))
+	}
+}
+
+func TestHandleInboundWithOnComplete(t *testing.T) {
+	dir := t.TempDir()
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+	gw := New(sessions, events, artifacts)
+
+	ctx := context.Background()
+	gw.Start(ctx)
+	defer gw.Stop()
+
+	var callbackResult string
+	var mu sync.Mutex
+	done := make(chan struct{})
+
+	gw.Queue.SetProcessor(func(run *Run) error {
+		if run.OnComplete != nil {
+			run.OnComplete("hello from processor")
+		}
+		return nil
+	})
+
+	event := &types.InboundEvent{
+		Source:     "test",
+		SessionKey: types.NewSessionKey("test", "user1"),
+		UserID:     "user1",
+		Text:       "hi",
+	}
+
+	err := gw.HandleInbound(ctx, event, WithOnComplete(func(resp string) {
+		mu.Lock()
+		callbackResult = resp
+		mu.Unlock()
+		close(done)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for callback")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if callbackResult != "hello from processor" {
+		t.Errorf("expected 'hello from processor', got %q", callbackResult)
 	}
 }

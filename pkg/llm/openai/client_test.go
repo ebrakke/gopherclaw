@@ -68,7 +68,7 @@ func TestOpenAIClient(t *testing.T) {
 
 func TestOpenAIClientRequestFormat(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify the request path includes /v1/chat/completions
+		// Verify the request path: base_url includes /v1, client appends /chat/completions
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("expected path '/v1/chat/completions', got %q", r.URL.Path)
 		}
@@ -107,7 +107,7 @@ func TestOpenAIClientRequestFormat(t *testing.T) {
 	defer server.Close()
 
 	config := &llm.Config{
-		BaseURL: server.URL,
+		BaseURL: server.URL + "/v1",
 		APIKey:  "key",
 		Model:   "gpt-4",
 	}

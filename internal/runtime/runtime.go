@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	ctxengine "github.com/user/gopherclaw/internal/context"
@@ -54,6 +55,8 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 		ctx = context.Background()
 	}
 
+	log := slog.With("run_id", string(run.ID), "session_id", string(run.SessionID))
+
 	// 1. Record user_message event
 	userPayload, _ := json.Marshal(map[string]string{"text": run.Event.Text})
 	if err := rt.events.Append(ctx, &types.Event{
@@ -93,11 +96,15 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 			return fmt.Errorf("build prompt: %w", err)
 		}
 
+		log.Info("calling LLM", "round", round+1, "max_rounds", rt.maxRounds, "messages", len(messages))
+
 		// 5. Call LLM
 		resp, err := rt.provider.Complete(ctx, messages, rt.registry.AsLLMTools())
 		if err != nil {
 			return fmt.Errorf("LLM call: %w", err)
 		}
+
+		log.Info("LLM responded", "round", round+1, "content_len", len(resp.Content), "tool_calls", len(resp.ToolCalls))
 
 		// 6. If tool calls, execute them
 		if len(resp.ToolCalls) > 0 {
@@ -121,17 +128,22 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 				}
 
 				// Execute tool
+				args := normalizeArgs(tc.Function.Arguments)
+				log.Debug("tool call", "round", round+1, "tool", tc.Function.Name, "args", string(args))
 				tool, ok := rt.registry.Get(tc.Function.Name)
 				var result string
 				if !ok {
 					result = fmt.Sprintf("error: unknown tool %q", tc.Function.Name)
+					log.Warn("unknown tool", "round", round+1, "tool", tc.Function.Name)
 				} else {
 					var execErr error
-					result, execErr = tool.Execute(ctx, tc.Function.Arguments)
+					result, execErr = tool.Execute(ctx, args)
 					if execErr != nil {
 						result = fmt.Sprintf("error: %v", execErr)
+						log.Warn("tool error", "round", round+1, "tool", tc.Function.Name, "error", execErr)
 					}
 				}
+				log.Debug("tool result", "round", round+1, "tool", tc.Function.Name, "result_len", len(result), "result_preview", truncate(result, 200))
 
 				// Store as artifact if large
 				trPayload := map[string]any{
@@ -165,6 +177,7 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 
 		// 7. Text response -- done
 		if resp.Content != "" {
+			log.Info("run complete", "round", round+1, "response_len", len(resp.Content))
 			aPayload, _ := json.Marshal(map[string]string{"text": resp.Content})
 			if err := rt.events.Append(ctx, &types.Event{
 				ID:        types.NewEventID(),
@@ -184,12 +197,14 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 		}
 
 		// Empty response (no content, no tool calls) -- treat as done
+		log.Warn("empty LLM response", "round", round+1)
 		if run.OnComplete != nil {
 			run.OnComplete("")
 		}
 		return nil
 	}
 
+	log.Error("max tool rounds exceeded", "max_rounds", rt.maxRounds)
 	errPayload, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("max tool rounds (%d) exceeded", rt.maxRounds)})
 	rt.events.Append(ctx, &types.Event{
 		ID:        types.NewEventID(),
@@ -201,4 +216,24 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 		Payload:   errPayload,
 	})
 	return fmt.Errorf("max tool rounds (%d) exceeded", rt.maxRounds)
+}
+
+// normalizeArgs unwraps double-encoded JSON arguments.
+// Some LLM APIs return tool arguments as a JSON string containing JSON
+// (e.g. "{\"command\": \"ls\"}") instead of a raw JSON object.
+func normalizeArgs(args json.RawMessage) json.RawMessage {
+	var s string
+	if err := json.Unmarshal(args, &s); err == nil {
+		if json.Valid([]byte(s)) {
+			return json.RawMessage(s)
+		}
+	}
+	return args
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

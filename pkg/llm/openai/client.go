@@ -74,11 +74,16 @@ type responseUsage struct {
 func (c *Client) Complete(ctx context.Context, messages []llm.Message, tools []llm.Tool) (*llm.Response, error) {
 	reqMessages := make([]requestMessage, len(messages))
 	for i, msg := range messages {
-		reqMessages[i] = requestMessage{
-			Role:      msg.Role,
-			Content:   msg.Content,
-			ToolCalls: msg.Tools,
+		rm := requestMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
 		}
+		if msg.Role == "tool" && len(msg.Tools) > 0 {
+			rm.ToolCallID = msg.Tools[0].ID
+		} else if len(msg.Tools) > 0 {
+			rm.ToolCalls = msg.Tools
+		}
+		reqMessages[i] = rm
 	}
 
 	reqBody := chatRequest{
@@ -104,7 +109,7 @@ func (c *Client) Complete(ctx context.Context, messages []llm.Message, tools []l
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	url := c.config.BaseURL + "/v1/chat/completions"
+	url := c.config.BaseURL + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)

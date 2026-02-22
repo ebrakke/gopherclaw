@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"golang.org/x/sync/semaphore"
@@ -92,7 +93,12 @@ func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 			}
 			if q.processor != nil {
 				run.Ctx = q.ctx
-				q.processor(run)
+				if err := q.processor(run); err != nil {
+					slog.Error("run failed", "run_id", string(run.ID), "session_id", string(run.SessionID), "error", err)
+					if run.OnComplete != nil {
+						run.OnComplete("Sorry, something went wrong processing your message.")
+					}
+				}
 			}
 			q.semaphore.Release(1)
 		case <-q.ctx.Done():

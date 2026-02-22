@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	DataDir       string `json:"data_dir"`
+	LogLevel      string `json:"log_level"`
 	MaxConcurrent int    `json:"max_concurrent"`
 	MaxToolRounds int    `json:"max_tool_rounds"`
 	LLM           struct {
@@ -34,9 +35,10 @@ func Load(path string) (*Config, error) {
 		DataDir:       filepath.Join(os.Getenv("HOME"), ".gopherclaw"),
 		MaxConcurrent: 2,
 	}
+	cfg.LogLevel = "info"
 	cfg.MaxToolRounds = 10
 	cfg.LLM.Provider = "openai"
-	cfg.LLM.BaseURL = "https://api.openai.com"
+	cfg.LLM.BaseURL = "https://api.openai.com/v1"
 	cfg.LLM.Model = "gpt-3.5-turbo"
 	cfg.LLM.MaxTokens = 2000
 	cfg.LLM.Temperature = 0.7

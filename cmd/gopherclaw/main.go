@@ -4,10 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/user/gopherclaw/internal/config"
@@ -27,11 +28,27 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+		os.Exit(1)
 	}
 
+	// Set up slog
+	var level slog.Level
+	switch strings.ToLower(cfg.LogLevel) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+
 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-		log.Fatalf("Failed to create data dir: %v", err)
+		slog.Error("failed to create data dir", "error", err)
+		os.Exit(1)
 	}
 
 	// Stores
@@ -51,7 +68,8 @@ func main() {
 	// Context engine
 	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve)
 	if err != nil {
-		log.Fatalf("Failed to create context engine: %v", err)
+		slog.Error("failed to create context engine", "error", err)
+		os.Exit(1)
 	}
 
 	// Tool registry
@@ -75,32 +93,31 @@ func main() {
 	gw.Start(ctx)
 	defer gw.Stop()
 
-	fmt.Printf("Gopherclaw started\n")
-	fmt.Printf("Data directory: %s\n", cfg.DataDir)
-	fmt.Printf("Max concurrent runs: %d\n", cfg.MaxConcurrent)
-	fmt.Printf("Max tool rounds: %d\n", cfg.MaxToolRounds)
-	fmt.Printf("LLM provider: %s (%s)\n", cfg.LLM.Provider, cfg.LLM.Model)
-	fmt.Printf("Tools: bash, read_url")
-	if cfg.Brave.APIKey != "" {
-		fmt.Printf(", brave_search")
-	}
-	fmt.Println()
+	slog.Info("gopherclaw started",
+		"data_dir", cfg.DataDir,
+		"log_level", cfg.LogLevel,
+		"max_concurrent", cfg.MaxConcurrent,
+		"max_tool_rounds", cfg.MaxToolRounds,
+		"llm_provider", cfg.LLM.Provider,
+		"llm_model", cfg.LLM.Model,
+	)
 
 	// Telegram adapter
 	if cfg.Telegram.Token != "" {
 		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions)
 		if err != nil {
-			log.Fatalf("Failed to create Telegram adapter: %v", err)
+			slog.Error("failed to create telegram adapter", "error", err)
+			os.Exit(1)
 		}
 		go adapter.Start(ctx)
-		fmt.Println("Telegram adapter started")
+		slog.Info("telegram adapter started")
 	} else {
-		fmt.Println("Telegram adapter disabled (no token)")
+		slog.Warn("telegram adapter disabled (no token)")
 	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	fmt.Println("\nShutting down...")
+	slog.Info("shutting down")
 }

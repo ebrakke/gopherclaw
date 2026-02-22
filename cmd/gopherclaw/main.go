@@ -1,38 +1,39 @@
 package main
 
 import (
-	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
+	"github.com/spf13/cobra"
 	"github.com/user/gopherclaw/internal/config"
-	ctxengine "github.com/user/gopherclaw/internal/context"
-	"github.com/user/gopherclaw/internal/gateway"
-	"github.com/user/gopherclaw/internal/runtime"
-	"github.com/user/gopherclaw/internal/runtime/tools"
-	"github.com/user/gopherclaw/internal/state"
-	"github.com/user/gopherclaw/internal/telegram"
-	"github.com/user/gopherclaw/pkg/llm"
-	"github.com/user/gopherclaw/pkg/llm/openai"
 )
 
-func main() {
-	configPath := flag.String("config", filepath.Join(os.Getenv("HOME"), ".gopherclaw", "config.json"), "config file path")
-	flag.Parse()
+var (
+	cfgPath string
+	rootCmd = &cobra.Command{
+		Use:   "gopherclaw",
+		Short: "Single-binary AI assistant runtime",
+	}
+)
 
-	cfg, err := config.Load(*configPath)
+func init() {
+	defaultPath := filepath.Join(os.Getenv("HOME"), ".gopherclaw", "config.json")
+	rootCmd.PersistentFlags().StringVar(&cfgPath, "config", defaultPath, "config file path")
+}
+
+func loadConfig() *config.Config {
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+	return cfg
+}
 
-	// Set up slog
+func setupLogging(cfg *config.Config) {
 	var level slog.Level
 	switch strings.ToLower(cfg.LogLevel) {
 	case "debug":
@@ -45,79 +46,10 @@ func main() {
 		level = slog.LevelInfo
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
+}
 
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-		slog.Error("failed to create data dir", "error", err)
+func main() {
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
-
-	// Stores
-	sessions := state.NewSessionStore(cfg.DataDir)
-	events := state.NewEventStore(cfg.DataDir)
-	artifacts := state.NewArtifactStore(cfg.DataDir)
-
-	// LLM provider
-	provider := openai.New(&llm.Config{
-		BaseURL:     cfg.LLM.BaseURL,
-		APIKey:      cfg.LLM.APIKey,
-		Model:       cfg.LLM.Model,
-		MaxTokens:   cfg.LLM.MaxTokens,
-		Temperature: cfg.LLM.Temperature,
-	})
-
-	// Context engine
-	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve)
-	if err != nil {
-		slog.Error("failed to create context engine", "error", err)
-		os.Exit(1)
-	}
-
-	// Tool registry
-	registry := runtime.NewRegistry()
-	registry.Register(tools.NewBash())
-	if cfg.Brave.APIKey != "" {
-		registry.Register(tools.NewBraveSearch(cfg.Brave.APIKey))
-	}
-	registry.Register(tools.NewReadURL())
-
-	// Runtime
-	rt := runtime.New(provider, engine, sessions, events, artifacts, registry, cfg.MaxToolRounds)
-
-	// Gateway
-	gw := gateway.New(sessions, events, artifacts, int64(cfg.MaxConcurrent))
-	gw.Queue.SetProcessor(rt.ProcessRun)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	gw.Start(ctx)
-	defer gw.Stop()
-
-	slog.Info("gopherclaw started",
-		"data_dir", cfg.DataDir,
-		"log_level", cfg.LogLevel,
-		"max_concurrent", cfg.MaxConcurrent,
-		"max_tool_rounds", cfg.MaxToolRounds,
-		"llm_provider", cfg.LLM.Provider,
-		"llm_model", cfg.LLM.Model,
-	)
-
-	// Telegram adapter
-	if cfg.Telegram.Token != "" {
-		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions)
-		if err != nil {
-			slog.Error("failed to create telegram adapter", "error", err)
-			os.Exit(1)
-		}
-		go adapter.Start(ctx)
-		slog.Info("telegram adapter started")
-	} else {
-		slog.Warn("telegram adapter disabled (no token)")
-	}
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-
-	slog.Info("shutting down")
 }

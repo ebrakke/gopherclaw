@@ -10,14 +10,23 @@ import (
 type Config struct {
 	DataDir       string `json:"data_dir"`
 	MaxConcurrent int    `json:"max_concurrent"`
+	MaxToolRounds int    `json:"max_tool_rounds"`
 	LLM           struct {
-		Provider    string  `json:"provider"`
-		BaseURL     string  `json:"base_url"`
-		APIKey      string  `json:"api_key"`
-		Model       string  `json:"model"`
-		MaxTokens   int     `json:"max_tokens"`
-		Temperature float32 `json:"temperature"`
+		Provider         string  `json:"provider"`
+		BaseURL          string  `json:"base_url"`
+		APIKey           string  `json:"api_key"`
+		Model            string  `json:"model"`
+		MaxTokens        int     `json:"max_tokens"`
+		Temperature      float32 `json:"temperature"`
+		MaxContextTokens int     `json:"max_context_tokens"`
+		OutputReserve    int     `json:"output_reserve"`
 	} `json:"llm"`
+	Brave struct {
+		APIKey string `json:"api_key"`
+	} `json:"brave"`
+	Telegram struct {
+		Token string `json:"token"`
+	} `json:"telegram"`
 }
 
 func Load(path string) (*Config, error) {
@@ -25,11 +34,14 @@ func Load(path string) (*Config, error) {
 		DataDir:       filepath.Join(os.Getenv("HOME"), ".gopherclaw"),
 		MaxConcurrent: 2,
 	}
+	cfg.MaxToolRounds = 10
 	cfg.LLM.Provider = "openai"
 	cfg.LLM.BaseURL = "https://api.openai.com"
 	cfg.LLM.Model = "gpt-3.5-turbo"
 	cfg.LLM.MaxTokens = 2000
 	cfg.LLM.Temperature = 0.7
+	cfg.LLM.MaxContextTokens = 128000
+	cfg.LLM.OutputReserve = 4096
 
 	// Load from file if exists, otherwise write defaults
 	if _, err := os.Stat(path); err == nil {
@@ -52,6 +64,12 @@ func Load(path string) (*Config, error) {
 	}
 	if baseURL := os.Getenv("OPENAI_BASE_URL"); baseURL != "" {
 		cfg.LLM.BaseURL = baseURL
+	}
+	if braveKey := os.Getenv("BRAVE_API_KEY"); braveKey != "" {
+		cfg.Brave.APIKey = braveKey
+	}
+	if tgToken := os.Getenv("TELEGRAM_BOT_TOKEN"); tgToken != "" {
+		cfg.Telegram.Token = tgToken
 	}
 
 	return cfg, nil

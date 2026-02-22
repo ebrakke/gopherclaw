@@ -6,9 +6,14 @@ import (
 
 // secretKeys lists the dot-separated keys whose values should be masked.
 var secretKeys = map[string]bool{
-	"llm.api_key":   true,
-	"brave.api_key": true,
+	"llm.api_key":    true,
+	"brave.api_key":  true,
 	"telegram.token": true,
+}
+
+// IsSecretKey returns true if the given dot-separated key is a secret.
+func IsSecretKey(key string) bool {
+	return secretKeys[key]
 }
 
 // Flatten converts a nested map into a flat map with dot-separated keys.
@@ -50,7 +55,12 @@ func Unflatten(flat map[string]any) map[string]any {
 					next = make(map[string]any)
 					current[part] = next
 				}
-				current = next.(map[string]any)
+				m, ok := next.(map[string]any)
+				if !ok {
+					m = make(map[string]any)
+					current[part] = m
+				}
+				current = m
 			}
 		}
 	}

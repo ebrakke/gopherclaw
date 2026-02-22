@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -75,8 +76,16 @@ var sessionClearCmd = &cobra.Command{
 			return nil
 		}
 
-		// Remove specific session directory
+		// Remove specific session directory (validate path to prevent traversal)
 		sessionDir := filepath.Join(sessionsDir, args[0])
+		resolved, err := filepath.Abs(sessionDir)
+		if err != nil {
+			return fmt.Errorf("resolve path: %w", err)
+		}
+		absSessionsDir, _ := filepath.Abs(sessionsDir)
+		if !strings.HasPrefix(resolved, absSessionsDir+string(filepath.Separator)) {
+			return fmt.Errorf("invalid session ID: %s", args[0])
+		}
 		if _, err := os.Stat(sessionDir); os.IsNotExist(err) {
 			return fmt.Errorf("session not found: %s", args[0])
 		}

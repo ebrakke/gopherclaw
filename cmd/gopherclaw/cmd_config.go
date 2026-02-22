@@ -66,7 +66,11 @@ var configSetCmd = &cobra.Command{
 		if err := config.SetValue(cfgPath, args[0], args[1]); err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stdout, "Set %s = %s\n", args[0], args[1])
+		display := args[1]
+		if config.IsSecretKey(args[0]) {
+			display = "***"
+		}
+		fmt.Fprintf(os.Stdout, "Set %s = %s\n", args[0], display)
 		return nil
 	},
 }

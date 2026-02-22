@@ -174,7 +174,7 @@ func SetValue(path, key, value string) error {
 	out = append(out, '\n')
 
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, out, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, out, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -194,7 +194,7 @@ func writeDefaults(path string, cfg *Config) error {
 	}
 	data = append(data, '\n')
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return fmt.Errorf("write default config: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

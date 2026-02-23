@@ -70,7 +70,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	})
 
 	// Context engine
-	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve)
+	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve, cfg.SystemPromptPath)
 	if err != nil {
 		return fmt.Errorf("create context engine: %w", err)
 	}
@@ -82,6 +82,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		registry.Register(tools.NewBraveSearch(cfg.Brave.APIKey))
 	}
 	registry.Register(tools.NewReadURL())
+
+	// Memory tools
+	memoryPath := filepath.Join(cfg.DataDir, "memory.md")
+	registry.Register(tools.NewMemorySave(memoryPath))
+	registry.Register(tools.NewMemoryDelete(memoryPath))
+	registry.Register(tools.NewMemoryList(memoryPath))
+
+	// Wire memory path into context engine
+	engine.SetMemoryPath(memoryPath)
 
 	// Runtime
 	rt := runtime.New(provider, engine, sessions, events, artifacts, registry, cfg.MaxToolRounds)
@@ -106,9 +115,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		"pid_file", pidPath,
 	)
 
+	// Collect tool names for context summary
+	var toolNames []string
+	for _, t := range registry.All() {
+		toolNames = append(toolNames, t.Name())
+	}
+
 	// Telegram adapter
 	if cfg.Telegram.Token != "" {
-		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions)
+		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions, engine, toolNames, memoryPath)
 		if err != nil {
 			return fmt.Errorf("create telegram adapter: %w", err)
 		}

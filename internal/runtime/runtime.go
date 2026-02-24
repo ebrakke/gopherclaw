@@ -204,18 +204,50 @@ func (rt *Runtime) ProcessRun(run *gateway.Run) error {
 		return nil
 	}
 
-	log.Error("max tool rounds exceeded", "max_rounds", rt.maxRounds)
-	errPayload, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("max tool rounds (%d) exceeded", rt.maxRounds)})
-	rt.events.Append(ctx, &types.Event{
+	// Max rounds exhausted — make one final LLM call without tools to force
+	// a text summary instead of dropping the conversation with an error.
+	log.Warn("max tool rounds reached, forcing final response", "max_rounds", rt.maxRounds)
+
+	session, err := rt.sessions.Get(ctx, run.SessionID)
+	if err != nil {
+		return fmt.Errorf("load session for final response: %w", err)
+	}
+	events, err := rt.events.Tail(ctx, run.SessionID, 100)
+	if err != nil {
+		return fmt.Errorf("load events for final response: %w", err)
+	}
+	messages, err := rt.engine.BuildPrompt(ctx, session, events, rt.artifacts, toolNames)
+	if err != nil {
+		return fmt.Errorf("build prompt for final response: %w", err)
+	}
+
+	resp, err := rt.provider.Complete(ctx, messages, nil) // no tools
+	if err != nil {
+		return fmt.Errorf("final LLM call: %w", err)
+	}
+
+	content := resp.Content
+	if content == "" {
+		content = "I ran out of steps before I could finish. Here's what I got done so far — please send a follow-up message if you'd like me to continue."
+	}
+
+	log.Info("run complete (forced final response)", "response_len", len(content))
+	aPayload, _ := json.Marshal(map[string]string{"text": content})
+	if err := rt.events.Append(ctx, &types.Event{
 		ID:        types.NewEventID(),
 		SessionID: run.SessionID,
 		RunID:     run.ID,
-		Type:      "error",
+		Type:      "assistant_message",
 		Source:    "runtime",
 		At:        time.Now(),
-		Payload:   errPayload,
-	})
-	return fmt.Errorf("max tool rounds (%d) exceeded", rt.maxRounds)
+		Payload:   aPayload,
+	}); err != nil {
+		return fmt.Errorf("record final assistant message: %w", err)
+	}
+	if run.OnComplete != nil {
+		run.OnComplete(content)
+	}
+	return nil
 }
 
 // normalizeArgs unwraps double-encoded JSON arguments.

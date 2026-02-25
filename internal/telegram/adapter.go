@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -74,6 +75,11 @@ func (a *Adapter) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	chatID := msg.Chat.ID
+
+	// Start typing indicator and keep it alive until processing completes.
+	typingCtx, stopTyping := context.WithCancel(ctx)
+	go a.sendTyping(typingCtx, chatID)
+
 	event := &types.InboundEvent{
 		Source:     "telegram",
 		SessionKey: buildSessionKey(msg.From.ID, msg.Chat.ID),
@@ -82,6 +88,7 @@ func (a *Adapter) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	err := a.gateway.HandleInbound(ctx, event, gateway.WithOnComplete(func(response string) {
+		stopTyping()
 		a.sendResponse(chatID, response)
 	}))
 	if err != nil {
@@ -184,6 +191,23 @@ func (a *Adapter) sendResponse(chatID int64, text string) {
 			if _, err := a.bot.Send(msg); err != nil {
 				log.Printf("send message error: %v", err)
 			}
+		}
+	}
+}
+
+// sendTyping sends "typing..." indicator every 4 seconds until ctx is cancelled.
+func (a *Adapter) sendTyping(ctx context.Context, chatID int64) {
+	action := tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping)
+	a.bot.Send(action)
+
+	ticker := time.NewTicker(4 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.bot.Send(action)
+		case <-ctx.Done():
+			return
 		}
 	}
 }

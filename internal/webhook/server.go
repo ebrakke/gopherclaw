@@ -2,6 +2,7 @@
 package webhook
 
 import (
+	_ "embed"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,9 @@ import (
 	"github.com/user/gopherclaw/internal/state"
 	"github.com/user/gopherclaw/internal/types"
 )
+
+//go:embed static/index.html
+var indexHTML []byte
 
 // TaskHandler is a callback that processes a prompt within the given session.
 type TaskHandler func(sessionKey, prompt string) (string, error)
@@ -235,6 +239,10 @@ func (s *Server) handleAPIArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><body>debug ui placeholder</body></html>"))
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(indexHTML)
 }

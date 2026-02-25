@@ -213,7 +213,25 @@ func (s *Server) handleAPISessionEvents(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleAPIArtifact(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, `{"error":"not implemented"}`, http.StatusNotImplemented)
+	if s.artifacts == nil {
+		http.Error(w, `{"error":"debug API not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/artifacts/")
+	if id == "" {
+		http.Error(w, `{"error":"artifact id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	data, err := s.artifacts.Get(r.Context(), types.ArtifactID(id))
+	if err != nil {
+		http.Error(w, `{"error":"artifact not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {

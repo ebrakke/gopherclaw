@@ -354,6 +354,63 @@ func TestAPISessionEventsWithLimit(t *testing.T) {
 	}
 }
 
+func TestAPIArtifact(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	ctx := context.Background()
+	sid, err := sessions.ResolveOrCreate(ctx, "test:key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aid, err := artifacts.Put(ctx, sid, types.NewRunID(), "bash", "hello world output")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/artifacts/"+string(aid), nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result string
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result != "hello world output" {
+		t.Errorf("expected 'hello world output', got %q", result)
+	}
+}
+
+func TestAPIArtifactNotFound(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/artifacts/nonexistent-id", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
 func TestAPISessionEventsNotFound(t *testing.T) {
 	mock := &mockGateway{response: "unused"}
 	dir := t.TempDir()

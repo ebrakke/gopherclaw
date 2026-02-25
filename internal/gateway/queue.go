@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/semaphore"
 
@@ -19,6 +21,7 @@ type Queue struct {
 	lanes     map[types.SessionID]chan *Run
 	semaphore *semaphore.Weighted
 	processor func(*Run) error
+	active    atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -92,6 +95,7 @@ func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 				return
 			}
 			if q.processor != nil {
+				q.active.Add(1)
 				run.Ctx = q.ctx
 				if err := q.processor(run); err != nil {
 					slog.Error("run failed", "run_id", string(run.ID), "session_id", string(run.SessionID), "error", err)
@@ -99,10 +103,27 @@ func (q *Queue) processLane(sessionID types.SessionID, lane chan *Run) {
 						run.OnComplete("Sorry, something went wrong processing your message.")
 					}
 				}
+				q.active.Add(-1)
 			}
 			q.semaphore.Release(1)
 		case <-q.ctx.Done():
 			return
+		}
+	}
+}
+
+// WaitIdle blocks until no runs are actively being processed, or the timeout
+// expires. Returns true if idle, false if timed out.
+func (q *Queue) WaitIdle(timeout time.Duration) bool {
+	deadline := time.After(timeout)
+	for {
+		if q.active.Load() == 0 {
+			return true
+		}
+		select {
+		case <-deadline:
+			return false
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }

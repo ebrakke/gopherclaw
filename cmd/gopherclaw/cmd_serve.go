@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	ctxengine "github.com/user/gopherclaw/internal/context"
@@ -211,7 +212,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	for {
 		sig := <-sigChan
 		if sig == syscall.SIGHUP {
-			slog.Info("received SIGHUP, restarting")
+			slog.Info("received SIGHUP, waiting for in-flight requests to complete")
+			if ok := gw.Queue.WaitIdle(30 * time.Second); !ok {
+				slog.Warn("timed out waiting for in-flight requests, restarting anyway")
+			} else {
+				slog.Info("all in-flight requests completed")
+			}
 			execPath, err := os.Executable()
 			if err != nil {
 				slog.Error("failed to get executable path", "error", err)

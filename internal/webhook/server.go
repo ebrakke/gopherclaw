@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/user/gopherclaw/internal/state"
@@ -176,7 +177,39 @@ func (s *Server) handleAPISessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPISessionEvents(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, `{"error":"not implemented"}`, http.StatusNotImplemented)
+	if s.events == nil {
+		http.Error(w, `{"error":"debug API not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	// Path: /api/sessions/{id}/events
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 2 || parts[1] != "events" {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	sessionID := types.SessionID(parts[0])
+
+	limit := 200
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	events, err := s.events.Tail(r.Context(), sessionID, limit)
+	if err != nil {
+		slog.Error("tail events failed", "session_id", sessionID, "error", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []*types.Event{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(events)
 }
 
 func (s *Server) handleAPIArtifact(w http.ResponseWriter, r *http.Request) {

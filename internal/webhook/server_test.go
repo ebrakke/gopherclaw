@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/user/gopherclaw/internal/state"
+	"github.com/user/gopherclaw/internal/types"
 )
 
 type mockGateway struct {
@@ -236,5 +238,137 @@ func TestAPISessionsList(t *testing.T) {
 	}
 	if result[0]["session_id"] != string(sid) {
 		t.Errorf("expected session_id %s, got %v", sid, result[0]["session_id"])
+	}
+}
+
+func TestAPISessionEvents(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	ctx := context.Background()
+	sid, err := sessions.ResolveOrCreate(ctx, "test:key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt1 := &types.Event{
+		ID:        types.NewEventID(),
+		SessionID: sid,
+		RunID:     types.NewRunID(),
+		Type:      "user_message",
+		Source:    "test",
+		At:        time.Now(),
+		Payload:   json.RawMessage(`{"text":"hello"}`),
+	}
+	evt2 := &types.Event{
+		ID:        types.NewEventID(),
+		SessionID: sid,
+		RunID:     evt1.RunID,
+		Type:      "assistant_message",
+		Source:    "runtime",
+		At:        time.Now(),
+		Payload:   json.RawMessage(`{"text":"hi there"}`),
+	}
+	if err := events.Append(ctx, evt1); err != nil {
+		t.Fatal(err)
+	}
+	if err := events.Append(ctx, evt2); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+string(sid)+"/events", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(result))
+	}
+	if result[0]["type"] != "user_message" {
+		t.Errorf("expected first event type 'user_message', got %v", result[0]["type"])
+	}
+	if result[1]["type"] != "assistant_message" {
+		t.Errorf("expected second event type 'assistant_message', got %v", result[1]["type"])
+	}
+}
+
+func TestAPISessionEventsWithLimit(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	ctx := context.Background()
+	sid, err := sessions.ResolveOrCreate(ctx, "test:key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runID := types.NewRunID()
+	for i := 0; i < 5; i++ {
+		evt := &types.Event{
+			ID:        types.NewEventID(),
+			SessionID: sid,
+			RunID:     runID,
+			Type:      "user_message",
+			Source:    "test",
+			At:        time.Now(),
+			Payload:   json.RawMessage(`{"text":"msg"}`),
+		}
+		if err := events.Append(ctx, evt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+string(sid)+"/events?limit=3", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(result))
+	}
+}
+
+func TestAPISessionEventsNotFound(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/nonexistent-id/events", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }

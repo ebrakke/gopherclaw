@@ -95,6 +95,8 @@ When a scheduled task fires, you process the prompt as if the user sent it, and 
 
 Webhook tasks can also be triggered externally via HTTP: ` + "`POST http://127.0.0.1:8484/webhook/<name>`" + `.
 
+**Important:** After adding, removing, or changing scheduled tasks, you must restart yourself with ` + "`gopherclaw restart`" + ` so the scheduler picks up the changes. Webhook-only tasks work immediately without a restart.
+
 ## Response Style
 
 - Be concise and direct. Don't pad responses with filler.

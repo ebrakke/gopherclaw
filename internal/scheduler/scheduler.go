@@ -19,14 +19,19 @@ type Scheduler struct {
 	cron    *cron.Cron
 }
 
+// cronParser accepts both standard 5-field cron expressions and 6-field
+// expressions with an optional seconds field.
+var cronParser = cron.NewParser(
+	cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+)
+
 // New creates a new Scheduler backed by the given task store. The handler is
-// called each time a scheduled task fires. The cron instance is created with
-// cron.WithSeconds() to support 6-field cron expressions.
+// called each time a scheduled task fires.
 func New(store *state.TaskStore, handler Handler) *Scheduler {
 	return &Scheduler{
 		store:   store,
 		handler: handler,
-		cron:    cron.New(cron.WithSeconds()),
+		cron:    cron.New(cron.WithParser(cronParser)),
 	}
 }
 
@@ -67,7 +72,7 @@ func (s *Scheduler) Start() error {
 // Reload stops the existing cron, creates a new one, and calls Start() again.
 func (s *Scheduler) Reload() error {
 	s.cron.Stop()
-	s.cron = cron.New(cron.WithSeconds())
+	s.cron = cron.New(cron.WithParser(cronParser))
 	return s.Start()
 }
 

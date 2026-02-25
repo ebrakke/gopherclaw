@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/user/gopherclaw/internal/state"
+	"github.com/user/gopherclaw/internal/types"
 )
 
 // TaskHandler is a callback that processes a prompt within the given session.
@@ -15,21 +17,31 @@ type TaskHandler func(sessionKey, prompt string) (string, error)
 
 // Server is a lightweight HTTP handler for webhook endpoints.
 type Server struct {
-	store   *state.TaskStore
-	handler TaskHandler
-	mux     *http.ServeMux
+	store     *state.TaskStore
+	handler   TaskHandler
+	sessions  types.SessionStore
+	events    types.EventStore
+	artifacts types.ArtifactStore
+	mux       *http.ServeMux
 }
 
-// NewServer creates a new webhook Server with the given task store and handler callback.
-func NewServer(store *state.TaskStore, handler TaskHandler) *Server {
+// NewServer creates a new webhook Server with the given task store, handler callback, and stores.
+func NewServer(store *state.TaskStore, handler TaskHandler, sessions types.SessionStore, events types.EventStore, artifacts types.ArtifactStore) *Server {
 	s := &Server{
-		store:   store,
-		handler: handler,
-		mux:     http.NewServeMux(),
+		store:     store,
+		handler:   handler,
+		sessions:  sessions,
+		events:    events,
+		artifacts: artifacts,
+		mux:       http.NewServeMux(),
 	}
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /webhook", s.handleAdHoc)
 	s.mux.HandleFunc("POST /webhook/", s.handleNamedTask)
+	s.mux.HandleFunc("GET /api/sessions", s.handleAPISessions)
+	s.mux.HandleFunc("GET /api/sessions/", s.handleAPISessionEvents)
+	s.mux.HandleFunc("GET /api/artifacts/", s.handleAPIArtifact)
+	s.mux.HandleFunc("GET /", s.handleIndex)
 	return s
 }
 
@@ -113,4 +125,58 @@ func (s *Server) handleNamedTask(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"response": resp})
+}
+
+type sessionResponse struct {
+	SessionID  string `json:"session_id"`
+	SessionKey string `json:"session_key"`
+	Agent      string `json:"agent"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	EventCount int64  `json:"event_count"`
+}
+
+func (s *Server) handleAPISessions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessions, err := s.sessions.List(ctx)
+	if err != nil {
+		slog.Error("list sessions failed", "error", err)
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]sessionResponse, 0, len(sessions))
+	for _, sess := range sessions {
+		count, _ := s.events.Count(ctx, sess.SessionID)
+		result = append(result, sessionResponse{
+			SessionID:  string(sess.SessionID),
+			SessionKey: string(sess.SessionKey),
+			Agent:      sess.Agent,
+			Status:     sess.Status,
+			CreatedAt:  sess.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:  sess.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			EventCount: count,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].UpdatedAt > result[j].UpdatedAt
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleAPISessionEvents(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, `{"error":"not implemented"}`, http.StatusNotImplemented)
+}
+
+func (s *Server) handleAPIArtifact(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, `{"error":"not implemented"}`, http.StatusNotImplemented)
+}
+
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("<html><body>debug ui placeholder</body></html>"))
 }

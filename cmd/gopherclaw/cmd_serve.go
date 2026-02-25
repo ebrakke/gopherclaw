@@ -189,7 +189,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Webhook HTTP server
 	if cfg.HTTP.Enabled {
-		webhookSrv := webhook.NewServer(taskStore, processTask)
+		webhookSrv := webhook.NewServer(taskStore, processTask, sessions, events, artifacts)
 		httpServer := &http.Server{
 			Addr:    cfg.HTTP.Listen,
 			Handler: webhookSrv,

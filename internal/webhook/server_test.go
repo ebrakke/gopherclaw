@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,7 @@ func setupServer(t *testing.T, mock *mockGateway, tasks ...*state.Task) *Server 
 			t.Fatal(err)
 		}
 	}
-	return NewServer(store, mock.HandleTask)
+	return NewServer(store, mock.HandleTask, nil, nil, nil)
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -198,5 +199,42 @@ func TestWebhookNamedTaskOverridePrompt(t *testing.T) {
 	}
 	if mock.lastSessionKey != "http:flex-session" {
 		t.Errorf("expected session key 'http:flex-session', got %q", mock.lastSessionKey)
+	}
+}
+
+func TestAPISessionsList(t *testing.T) {
+	mock := &mockGateway{response: "unused"}
+	dir := t.TempDir()
+	taskStore := state.NewTaskStore(filepath.Join(dir, "tasks.json"))
+	sessions := state.NewSessionStore(dir)
+	events := state.NewEventStore(dir)
+	artifacts := state.NewArtifactStore(dir)
+
+	// Create a session so there's something to list
+	ctx := context.Background()
+	sid, err := sessions.ResolveOrCreate(ctx, "test:key", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServer(taskStore, mock.HandleTask, sessions, events, artifacts)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var result []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(result))
+	}
+	if result[0]["session_id"] != string(sid) {
+		t.Errorf("expected session_id %s, got %v", sid, result[0]["session_id"])
 	}
 }

@@ -188,6 +188,24 @@ func (a *Adapter) sendResponse(chatID int64, text string) {
 	}
 }
 
+// SendTo delivers a message to a Telegram chat identified by session key.
+// Session key format: "telegram:<userID>:<chatID>"
+func (a *Adapter) SendTo(sessionKey, message string) error {
+	parts := strings.Split(sessionKey, ":")
+	if len(parts) != 3 || parts[0] != "telegram" {
+		return fmt.Errorf("invalid telegram session key: %s", sessionKey)
+	}
+	chatID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse chat ID: %w", err)
+	}
+	if message == "" {
+		return nil // bot decided not to respond
+	}
+	a.sendResponse(chatID, message)
+	return nil
+}
+
 func splitMessage(text string) []string {
 	if len(text) <= maxTelegramMessage {
 		return []string{text}

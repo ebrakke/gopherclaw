@@ -138,6 +138,10 @@ type sessionResponse struct {
 }
 
 func (s *Server) handleAPISessions(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil || s.events == nil {
+		http.Error(w, `{"error":"debug API not configured"}`, http.StatusServiceUnavailable)
+		return
+	}
 	ctx := r.Context()
 	sessions, err := s.sessions.List(ctx)
 	if err != nil {
@@ -148,7 +152,10 @@ func (s *Server) handleAPISessions(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]sessionResponse, 0, len(sessions))
 	for _, sess := range sessions {
-		count, _ := s.events.Count(ctx, sess.SessionID)
+		count, err := s.events.Count(ctx, sess.SessionID)
+		if err != nil {
+			slog.Warn("count events failed", "session_id", sess.SessionID, "error", err)
+		}
 		result = append(result, sessionResponse{
 			SessionID:  string(sess.SessionID),
 			SessionKey: string(sess.SessionKey),

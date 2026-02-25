@@ -8,10 +8,11 @@ import (
 )
 
 type Config struct {
-	DataDir       string `json:"data_dir"`
-	LogLevel      string `json:"log_level"`
-	MaxConcurrent int    `json:"max_concurrent"`
-	MaxToolRounds int    `json:"max_tool_rounds"`
+	DataDir          string `json:"data_dir"`
+	LogLevel         string `json:"log_level"`
+	MaxConcurrent    int    `json:"max_concurrent"`
+	MaxToolRounds    int    `json:"max_tool_rounds"`
+	SystemPromptPath string `json:"system_prompt_path"`
 	LLM           struct {
 		Provider         string  `json:"provider"`
 		BaseURL          string  `json:"base_url"`
@@ -28,6 +29,10 @@ type Config struct {
 	Telegram struct {
 		Token string `json:"token"`
 	} `json:"telegram"`
+	HTTP struct {
+		Enabled bool   `json:"enabled"`
+		Listen  string `json:"listen"`
+	} `json:"http"`
 }
 
 func Load(path string) (*Config, error) {
@@ -44,6 +49,7 @@ func Load(path string) (*Config, error) {
 	cfg.LLM.Temperature = 0.7
 	cfg.LLM.MaxContextTokens = 128000
 	cfg.LLM.OutputReserve = 4096
+	cfg.HTTP.Listen = "127.0.0.1:8484"
 
 	// Load from file if exists, otherwise write defaults
 	if _, err := os.Stat(path); err == nil {

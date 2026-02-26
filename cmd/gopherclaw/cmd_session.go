@@ -43,14 +43,15 @@ var sessionListCmd = &cobra.Command{
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tSTATUS\tMESSAGES\tCREATED")
+		fmt.Fprintln(w, "ID\tKEY\tSTATUS\tMESSAGES\tCREATED")
 		for _, s := range list {
 			count, err := events.Count(ctx, s.SessionID)
 			if err != nil {
 				count = 0
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
 				s.SessionID,
+				s.SessionKey,
 				s.Status,
 				count,
 				s.CreatedAt.Format("2006-01-02 15:04:05"),

@@ -79,7 +79,9 @@ If the user asks you to change your own settings (model, temperature, etc.), use
 
 ## Scheduled Tasks
 
-You can schedule recurring tasks and create webhook-triggerable tasks using the CLI:
+**IMPORTANT: When the user asks you to do something on a schedule, periodically, at a certain time, or repeatedly — you MUST use the built-in task scheduler below. NEVER create cron entries, shell scripts, loops, or background processes with bash. The built-in scheduler is the only correct way to schedule recurring work.**
+
+Commands:
 
 - List tasks: ` + "`gopherclaw task list`" + `
 - Add a scheduled task: ` + "`gopherclaw task add --name <name> --prompt \"<prompt>\" --schedule \"<cron>\" --session-key <key>`" + `
@@ -87,15 +89,15 @@ You can schedule recurring tasks and create webhook-triggerable tasks using the 
 - Remove a task: ` + "`gopherclaw task remove <name>`" + `
 - Enable/disable: ` + "`gopherclaw task enable <name>`" + ` / ` + "`gopherclaw task disable <name>`" + `
 
-The schedule uses standard cron syntax (e.g. ` + "`\"0 8 * * *\"`" + ` for daily at 8am, ` + "`\"*/30 * * * *\"`" + ` for every 30 minutes).
+The schedule uses standard cron syntax (e.g. ` + "`\"0 8 * * *\"`" + ` for daily at 8am, ` + "`\"*/30 * * * *\"`" + ` for every 30 minutes). The minimum interval is 1 minute.
 
-The session key determines where results are delivered. To deliver to the current Telegram chat, use the session key from this session's context. You can find it by running ` + "`gopherclaw session list`" + ` and looking for the active session's key.
+To find the session key for delivering results to the current Telegram chat, run ` + "`gopherclaw session list`" + ` and use the active session's key.
 
-When a scheduled task fires, you process the prompt as if the user sent it, and the response is delivered to the associated Telegram chat. If the prompt doesn't warrant a response, you can respond with an empty message to suppress delivery.
+When a scheduled task fires, you process the prompt as if the user sent it, and the response is delivered to the associated Telegram chat.
 
-Webhook tasks can also be triggered externally via HTTP: ` + "`POST http://127.0.0.1:8484/webhook/<name>`" + `.
+Webhook tasks can also be triggered externally via HTTP: ` + "`POST http://localhost:8484/webhook/<name>`" + `.
 
-**Important:** After adding, removing, or changing scheduled tasks, you must restart yourself with ` + "`gopherclaw restart`" + ` so the scheduler picks up the changes. Webhook-only tasks work immediately without a restart.
+**After adding or changing scheduled tasks, restart with** ` + "`gopherclaw restart`" + ` **so the scheduler picks up changes.**
 
 ## Response Style
 

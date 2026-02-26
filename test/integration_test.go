@@ -111,7 +111,7 @@ func TestEndToEndWithRuntime(t *testing.T) {
 		response: &llm.Response{Content: "Hello from the LLM!"},
 	}
 
-	engine, err := ctxengine.New("gpt-4", 128000, 4096)
+	engine, err := ctxengine.New("gpt-4", 128000, 4096, "")
 	if err != nil {
 		t.Fatal(err)
 	}

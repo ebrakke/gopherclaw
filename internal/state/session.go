@@ -163,6 +163,39 @@ func (s *SessionStore) List(_ context.Context) ([]*types.SessionIndex, error) {
 	return sessions, nil
 }
 
+// Rotate archives the current session for the given key and removes the
+// key mapping so the next ResolveOrCreate creates a fresh session.
+// Returns the old session ID (empty if no session existed).
+func (s *SessionStore) Rotate(_ context.Context, key types.SessionKey) (types.SessionID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	index, err := s.loadIndex()
+	if err != nil {
+		return "", err
+	}
+
+	existing, ok := index[key]
+	if !ok {
+		return "", nil
+	}
+
+	existing.Status = "archived"
+	existing.UpdatedAt = time.Now()
+
+	// Remove the key mapping so next resolve creates a new session.
+	// Keep the session in the index under a namespaced key for history.
+	archiveKey := types.SessionKey("archived:" + string(existing.SessionID))
+	existing.SessionKey = archiveKey
+	index[archiveKey] = existing
+	delete(index, key)
+
+	if err := s.saveIndex(index); err != nil {
+		return "", err
+	}
+	return existing.SessionID, nil
+}
+
 // Update persists changes to the given session, setting UpdatedAt to now.
 func (s *SessionStore) Update(_ context.Context, session *types.SessionIndex) error {
 	s.mu.Lock()

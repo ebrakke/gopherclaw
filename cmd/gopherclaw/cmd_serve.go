@@ -4,19 +4,25 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	ctxengine "github.com/user/gopherclaw/internal/context"
+	"github.com/user/gopherclaw/internal/delivery"
 	"github.com/user/gopherclaw/internal/gateway"
 	"github.com/user/gopherclaw/internal/runtime"
 	"github.com/user/gopherclaw/internal/runtime/tools"
+	"github.com/user/gopherclaw/internal/scheduler"
 	"github.com/user/gopherclaw/internal/state"
 	"github.com/user/gopherclaw/internal/telegram"
+	"github.com/user/gopherclaw/internal/types"
+	"github.com/user/gopherclaw/internal/webhook"
 	"github.com/user/gopherclaw/pkg/llm"
 	"github.com/user/gopherclaw/pkg/llm/openai"
 )
@@ -70,7 +76,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	})
 
 	// Context engine
-	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve)
+	engine, err := ctxengine.New(cfg.LLM.Model, cfg.LLM.MaxContextTokens, cfg.LLM.OutputReserve, cfg.SystemPromptPath)
 	if err != nil {
 		return fmt.Errorf("create context engine: %w", err)
 	}
@@ -82,6 +88,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		registry.Register(tools.NewBraveSearch(cfg.Brave.APIKey))
 	}
 	registry.Register(tools.NewReadURL())
+
+	// Memory tools
+	memoryPath := filepath.Join(cfg.DataDir, "memory.md")
+	registry.Register(tools.NewMemorySave(memoryPath))
+	registry.Register(tools.NewMemoryDelete(memoryPath))
+	registry.Register(tools.NewMemoryList(memoryPath))
+
+	// Wire memory path into context engine
+	engine.SetMemoryPath(memoryPath)
 
 	// Runtime
 	rt := runtime.New(provider, engine, sessions, events, artifacts, registry, cfg.MaxToolRounds)
@@ -106,16 +121,89 @@ func runServe(cmd *cobra.Command, args []string) error {
 		"pid_file", pidPath,
 	)
 
+	// Collect tool names for context summary
+	var toolNames []string
+	for _, t := range registry.All() {
+		toolNames = append(toolNames, t.Name())
+	}
+
+	// Task store
+	taskStore := state.NewTaskStore(filepath.Join(cfg.DataDir, "tasks.json"))
+
+	// Delivery registry
+	deliveryReg := delivery.NewRegistry()
+
 	// Telegram adapter
 	if cfg.Telegram.Token != "" {
-		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions)
+		adapter, err := telegram.New(cfg.Telegram.Token, gw, events, sessions, engine, toolNames, memoryPath)
 		if err != nil {
 			return fmt.Errorf("create telegram adapter: %w", err)
 		}
 		go adapter.Start(ctx)
 		slog.Info("telegram adapter started")
+
+		// Register telegram delivery for cron responses
+		deliveryReg.Register("telegram:", func(sessionKey, message string) error {
+			return adapter.SendTo(sessionKey, message)
+		})
 	} else {
 		slog.Warn("telegram adapter disabled (no token)")
+	}
+
+	// Helper: synchronously process a task through the gateway and return the response.
+	processTask := func(sessionKey, prompt string) (string, error) {
+		done := make(chan string, 1)
+		event := &types.InboundEvent{
+			Source:     "task",
+			SessionKey: types.SessionKey(sessionKey),
+			UserID:     "system",
+			Text:       prompt,
+		}
+		if err := gw.HandleInbound(ctx, event, gateway.WithOnComplete(func(response string) {
+			done <- response
+		})); err != nil {
+			return "", err
+		}
+		return <-done, nil
+	}
+
+	// Scheduler
+	sched := scheduler.New(taskStore, func(sessionKey, prompt string) {
+		response, err := processTask(sessionKey, prompt)
+		if err != nil {
+			slog.Error("cron task failed", "session_key", sessionKey, "error", err)
+			return
+		}
+		if response == "" {
+			return // bot decided not to respond
+		}
+		if err := deliveryReg.Deliver(sessionKey, response); err != nil {
+			slog.Error("cron delivery failed", "session_key", sessionKey, "error", err)
+		}
+	})
+	if err := sched.Start(); err != nil {
+		return fmt.Errorf("start scheduler: %w", err)
+	}
+	defer sched.Stop()
+	slog.Info("scheduler started")
+
+	// Webhook HTTP server
+	if cfg.HTTP.Enabled {
+		webhookSrv := webhook.NewServer(taskStore, processTask, sessions, events, artifacts)
+		httpServer := &http.Server{
+			Addr:    cfg.HTTP.Listen,
+			Handler: webhookSrv,
+		}
+		go func() {
+			slog.Info("webhook server started", "listen", cfg.HTTP.Listen)
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("webhook server error", "error", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			httpServer.Close()
+		}()
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -124,7 +212,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	for {
 		sig := <-sigChan
 		if sig == syscall.SIGHUP {
-			slog.Info("received SIGHUP, restarting")
+			slog.Info("received SIGHUP, waiting for in-flight requests to complete")
+			if ok := gw.Queue.WaitIdle(30 * time.Second); !ok {
+				slog.Warn("timed out waiting for in-flight requests, restarting anyway")
+			} else {
+				slog.Info("all in-flight requests completed")
+			}
 			execPath, err := os.Executable()
 			if err != nil {
 				slog.Error("failed to get executable path", "error", err)

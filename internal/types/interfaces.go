@@ -11,6 +11,7 @@ type SessionStore interface {
 	Get(ctx context.Context, id SessionID) (*SessionIndex, error)
 	List(ctx context.Context) ([]*SessionIndex, error)
 	Update(ctx context.Context, session *SessionIndex) error
+	Rotate(ctx context.Context, key SessionKey) (SessionID, error)
 }
 
 type EventStore interface {

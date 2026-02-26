@@ -2,9 +2,14 @@
 package context
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"text/template"
 	"time"
 
 	"github.com/pkoukk/tiktoken-go"
@@ -15,16 +20,29 @@ import (
 
 // Engine assembles token-budgeted prompts for the LLM.
 type Engine struct {
-	tokenizer *tiktoken.Tiktoken
-	maxTokens int
-	reserve   int
+	tokenizer  *tiktoken.Tiktoken
+	maxTokens  int
+	reserve    int
+	promptTmpl *template.Template
+	memoryPath string
+}
+
+// PromptData holds the dynamic values injected into the system prompt template.
+type PromptData struct {
+	Time      string
+	SessionID string
+	Tools     string
+	ToolList  []string
+	Memory    string
 }
 
 // New creates a context engine with the specified token budget.
 // model is used to select the appropriate tokenizer (e.g. "gpt-4").
 // maxTokens is the model's context window size.
 // reserve is the number of tokens to reserve for the model's response.
-func New(model string, maxTokens, reserve int) (*Engine, error) {
+// promptPath is the path to a system prompt template file. If empty or the
+// file does not exist, the built-in default prompt is used.
+func New(model string, maxTokens, reserve int, promptPath string) (*Engine, error) {
 	enc, err := tiktoken.EncodingForModel(model)
 	if err != nil {
 		// Fallback to cl100k_base for unknown models
@@ -33,11 +51,23 @@ func New(model string, maxTokens, reserve int) (*Engine, error) {
 			return nil, fmt.Errorf("get tokenizer: %w", err)
 		}
 	}
+
+	tmpl, err := loadPromptTemplate(promptPath)
+	if err != nil {
+		return nil, fmt.Errorf("load system prompt: %w", err)
+	}
+
 	return &Engine{
-		tokenizer: enc,
-		maxTokens: maxTokens,
-		reserve:   reserve,
+		tokenizer:  enc,
+		maxTokens:  maxTokens,
+		reserve:    reserve,
+		promptTmpl: tmpl,
 	}, nil
+}
+
+// SetMemoryPath configures the path to the persistent memory file.
+func (e *Engine) SetMemoryPath(path string) {
+	e.memoryPath = path
 }
 
 // countTokens returns the token count for a string.
@@ -58,7 +88,7 @@ func (e *Engine) BuildPrompt(
 	inputBudget := e.maxTokens - e.reserve
 
 	// 1. System prompt
-	sysPrompt := buildSystemPrompt(session, toolNames)
+	sysPrompt := e.buildSystemPrompt(session, toolNames)
 	sysTokens := e.countTokens(sysPrompt)
 	remaining := inputBudget - sysTokens
 
@@ -101,16 +131,122 @@ func (e *Engine) BuildPrompt(
 	return messages, nil
 }
 
-func buildSystemPrompt(session *types.SessionIndex, toolNames []string) string {
-	prompt := fmt.Sprintf(
-		"You are a helpful assistant. Current time: %s. Session: %s.",
-		time.Now().Format(time.RFC3339),
-		string(session.SessionID),
-	)
-	if len(toolNames) > 0 {
-		prompt += fmt.Sprintf(" You have access to the following tools: %v.", toolNames)
+func (e *Engine) buildSystemPrompt(session *types.SessionIndex, toolNames []string) string {
+	memory := ""
+	if e.memoryPath != "" {
+		if data, err := os.ReadFile(e.memoryPath); err == nil {
+			content := strings.TrimSpace(string(data))
+			if content != "" {
+				memory = content
+			}
+		}
 	}
-	return prompt
+
+	data := PromptData{
+		Time:      time.Now().Format(time.RFC3339),
+		SessionID: string(session.SessionID),
+		ToolList:  toolNames,
+		Tools:     strings.Join(toolNames, ", "),
+		Memory:    memory,
+	}
+
+	var buf bytes.Buffer
+	if err := e.promptTmpl.Execute(&buf, data); err != nil {
+		slog.Error("execute system prompt template", "error", err)
+		// Fallback to a minimal prompt
+		return fmt.Sprintf("You are a helpful assistant. Current time: %s.", data.Time)
+	}
+	return buf.String()
+}
+
+// ContextSummary holds token budget stats for debugging context assembly.
+type ContextSummary struct {
+	MaxTokens         int
+	Reserve           int
+	InputBudget       int
+	SystemPromptTokens int
+	SystemPromptText  string
+	EventBudget       int
+	EventTokensUsed   int
+	EventsIncluded    int
+	EventsTotal       int
+	BudgetRemaining   int
+}
+
+// Summarize computes context budget stats for the given session and events
+// without building the full prompt. toolNames should match what the runtime
+// passes to BuildPrompt.
+func (e *Engine) Summarize(
+	session *types.SessionIndex,
+	events []*types.Event,
+	toolNames []string,
+) *ContextSummary {
+	inputBudget := e.maxTokens - e.reserve
+
+	sysPrompt := e.buildSystemPrompt(session, toolNames)
+	sysTokens := e.countTokens(sysPrompt)
+	remaining := inputBudget - sysTokens
+
+	eventBudget := int(float64(remaining) * 0.7)
+
+	usedTokens := 0
+	included := 0
+	for i := len(events) - 1; i >= 0; i-- {
+		msg, err := eventToMessage(events[i])
+		if err != nil {
+			continue
+		}
+
+		msgTokens := e.countTokens(msg.Content)
+		for _, tc := range msg.Tools {
+			msgTokens += e.countTokens(tc.Function.Name)
+			msgTokens += e.countTokens(string(tc.Function.Arguments))
+		}
+
+		if usedTokens+msgTokens > eventBudget {
+			break
+		}
+		usedTokens += msgTokens
+		included++
+	}
+
+	return &ContextSummary{
+		MaxTokens:         e.maxTokens,
+		Reserve:           e.reserve,
+		InputBudget:       inputBudget,
+		SystemPromptTokens: sysTokens,
+		SystemPromptText:  sysPrompt,
+		EventBudget:       eventBudget,
+		EventTokensUsed:   usedTokens,
+		EventsIncluded:    included,
+		EventsTotal:       len(events),
+		BudgetRemaining:   inputBudget - sysTokens - usedTokens,
+	}
+}
+
+// loadPromptTemplate loads the system prompt template from a file, or returns
+// the built-in default if the path is empty or the file doesn't exist.
+func loadPromptTemplate(path string) (*template.Template, error) {
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			tmpl, err := template.New("system").Parse(string(data))
+			if err != nil {
+				return nil, fmt.Errorf("parse prompt template %s: %w", path, err)
+			}
+			slog.Info("loaded system prompt", "path", path)
+			return tmpl, nil
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read prompt file %s: %w", path, err)
+		}
+		// File doesn't exist — fall through to default
+		slog.Info("system prompt file not found, using default", "path", path)
+	}
+
+	tmpl, err := template.New("system").Parse(DefaultPrompt)
+	if err != nil {
+		return nil, fmt.Errorf("parse default prompt: %w", err)
+	}
+	return tmpl, nil
 }
 
 type eventPayload struct {

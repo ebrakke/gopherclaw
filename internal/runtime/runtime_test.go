@@ -54,7 +54,7 @@ func TestProcessRunSimpleResponse(t *testing.T) {
 		},
 	}
 
-	engine, err := ctxengine.New("gpt-4", 128000, 4096)
+	engine, err := ctxengine.New("gpt-4", 128000, 4096, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestProcessRunWithToolCall(t *testing.T) {
 		},
 	}
 
-	engine, err := ctxengine.New("gpt-4", 128000, 4096)
+	engine, err := ctxengine.New("gpt-4", 128000, 4096, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestProcessRunMaxRounds(t *testing.T) {
 		}
 	}
 
-	engine, _ := ctxengine.New("gpt-4", 128000, 4096)
+	engine, _ := ctxengine.New("gpt-4", 128000, 4096, "")
 	registry := NewRegistry()
 	registry.Register(&echoTool{})
 
@@ -227,8 +227,14 @@ func TestProcessRunMaxRounds(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
+	var completedWith string
+	run.OnComplete = func(msg string) { completedWith = msg }
+
 	err = rt.ProcessRun(run)
-	if err == nil {
-		t.Fatal("expected error for max rounds exceeded")
+	if err != nil {
+		t.Fatalf("expected graceful completion, got error: %v", err)
+	}
+	if completedWith == "" {
+		t.Fatal("expected OnComplete to be called with a fallback message")
 	}
 }

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gopherclaw debug</title>
+<style>
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #16213e;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #c0c0e0;
+}
+
+#refresh-btn {
+  background: #2a2a4a;
+  color: #c0c0e0;
+  border: 1px solid #3a3a5a;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+#refresh-btn:hover {
+  background: #3a3a5a;
+}
+
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  border-right: 1px solid #2a2a4a;
+  overflow-y: auto;
+  background: #16213e;
+}
+
+.sidebar-header {
+  padding: 10px 16px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a7a9a;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.session-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #1e1e3e;
+  transition: background 0.15s;
+}
+
+.session-item:hover {
+  background: #1e2a4e;
+}
+
+.session-item.selected {
+  background: #1e3a5f;
+}
+
+.session-item .session-key {
+  font-size: 13px;
+  color: #c0c0e0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-item .session-meta {
+  font-size: 11px;
+  color: #7a7a9a;
+  margin-top: 2px;
+}
+
+.session-item .status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.status-dot.active {
+  background: #4ade80;
+}
+
+.status-dot.archived {
+  background: #6a6a8a;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content-header {
+  padding: 12px 20px;
+  border-bottom: 1px solid #2a2a4a;
+  background: #16213e;
+  flex-shrink: 0;
+}
+
+.content-header h2 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c0c0e0;
+}
+
+.content-header .session-info {
+  font-size: 12px;
+  color: #7a7a9a;
+  margin-top: 4px;
+}
+
+.events {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #5a5a7a;
+  font-size: 14px;
+}
+
+.event {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  max-width: 90%;
+}
+
+.event .event-header {
+  font-size: 11px;
+  color: #8a8aa0;
+  margin-bottom: 4px;
+}
+
+.event .event-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.event.user_message {
+  background: #1e3a5f;
+  border-left: 3px solid #3b82f6;
+}
+
+.event.assistant_message {
+  background: #1a3d2e;
+  border-left: 3px solid #4ade80;
+}
+
+.event.tool_call,
+.event.tool_result {
+  background: #1e1e2e;
+  border-left: 3px solid #6a6a8a;
+  max-width: 95%;
+}
+
+.event details {
+  cursor: pointer;
+}
+
+.event details summary {
+  font-size: 13px;
+  color: #a0a0c0;
+  padding: 2px 0;
+  outline: none;
+  user-select: none;
+}
+
+.event details summary:hover {
+  color: #c0c0e0;
+}
+
+.event pre {
+  background: #12122a;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 12px;
+  margin-top: 6px;
+  color: #b0b0d0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.artifact-link {
+  color: #60a5fa;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 12px;
+}
+
+.artifact-link:hover {
+  color: #93c5fd;
+}
+
+.loading {
+  color: #5a5a7a;
+  padding: 20px;
+  text-align: center;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a4a;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5a;
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>gopherclaw debug</h1>
+    <button id="refresh-btn" onclick="refresh()">Refresh</button>
+  </header>
+  <div class="main">
+    <div class="sidebar">
+      <div class="sidebar-header">Sessions</div>
+      <div id="session-list"></div>
+    </div>
+    <div class="content">
+      <div id="content-header" class="content-header" style="display:none;"></div>
+      <div class="events" id="events">
+        <div class="empty-state">Select a session to view events</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var currentSessionId = null;
+  var sessionsData = [];
+
+  function timeAgo(dateStr) {
+    var now = Date.now();
+    var then = new Date(dateStr).getTime();
+    var diff = Math.floor((now - then) / 1000);
+
+    if (diff < 10) return "just now";
+    if (diff < 60) return diff + "s ago";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    if (diff < 2592000) return Math.floor(diff / 86400) + "d ago";
+    return Math.floor(diff / 2592000) + "mo ago";
+  }
+
+  function truncate(str, len) {
+    if (!str) return "";
+    if (str.length <= len) return str;
+    return str.substring(0, len) + "\u2026";
+  }
+
+  function escapeHtml(str) {
+    if (!str) return "";
+    var div = document.createElement("div");
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  function tryPrettyJson(str) {
+    if (!str) return "";
+    try {
+      var parsed = typeof str === "string" ? JSON.parse(str) : str;
+      return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      return typeof str === "string" ? str : JSON.stringify(str);
+    }
+  }
+
+  function loadSessions() {
+    fetch("/api/sessions")
+      .then(function(res) { return res.json(); })
+      .then(function(sessions) {
+        sessionsData = sessions || [];
+        renderSessions();
+      })
+      .catch(function(err) {
+        console.error("Failed to load sessions:", err);
+        document.getElementById("session-list").innerHTML =
+          '<div class="loading">Failed to load sessions</div>';
+      });
+  }
+
+  function renderSessions() {
+    var container = document.getElementById("session-list");
+    if (sessionsData.length === 0) {
+      container.innerHTML = '<div class="loading">No sessions found</div>';
+      return;
+    }
+
+    var html = "";
+    for (var i = 0; i < sessionsData.length; i++) {
+      var s = sessionsData[i];
+      var isActive = s.status === "active";
+      var isSelected = s.session_id === currentSessionId;
+      html += '<div class="session-item' + (isSelected ? " selected" : "") + '" data-id="' + escapeHtml(s.session_id) + '">';
+      html += '<div class="session-key">';
+      html += '<span class="status-dot ' + (isActive ? "active" : "archived") + '"></span>';
+      html += escapeHtml(truncate(s.session_key, 25));
+      html += '</div>';
+      html += '<div class="session-meta">';
+      html += (s.event_count || 0) + " events";
+      if (s.updated_at) html += " &middot; " + timeAgo(s.updated_at);
+      if (!isActive) html += " &middot; " + escapeHtml(s.status);
+      html += '</div>';
+      html += '</div>';
+    }
+    container.innerHTML = html;
+
+    var items = container.querySelectorAll(".session-item");
+    for (var j = 0; j < items.length; j++) {
+      items[j].addEventListener("click", function() {
+        var id = this.getAttribute("data-id");
+        loadEvents(id);
+      });
+    }
+  }
+
+  function loadEvents(sessionId) {
+    currentSessionId = sessionId;
+    renderSessions();
+
+    var session = null;
+    for (var i = 0; i < sessionsData.length; i++) {
+      if (sessionsData[i].session_id === sessionId) {
+        session = sessionsData[i];
+        break;
+      }
+    }
+
+    var headerEl = document.getElementById("content-header");
+    var eventsEl = document.getElementById("events");
+
+    if (session) {
+      headerEl.style.display = "block";
+      headerEl.innerHTML =
+        '<h2>Session: ' + escapeHtml(truncate(session.session_key, 40)) + '</h2>' +
+        '<div class="session-info">' +
+        'ID: ' + escapeHtml(session.session_id.substring(0, 8)) +
+        ' &nbsp; Status: ' + escapeHtml(session.status) +
+        ' &nbsp; Events: ' + (session.event_count || 0) +
+        ' &nbsp; Created: ' + timeAgo(session.created_at) +
+        '</div>';
+    }
+
+    eventsEl.innerHTML = '<div class="loading">Loading events...</div>';
+
+    fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/events?limit=200")
+      .then(function(res) { return res.json(); })
+      .then(function(events) {
+        renderEvents(events || []);
+      })
+      .catch(function(err) {
+        console.error("Failed to load events:", err);
+        eventsEl.innerHTML = '<div class="loading">Failed to load events</div>';
+      });
+  }
+
+  function renderEvents(events) {
+    var container = document.getElementById("events");
+    if (events.length === 0) {
+      container.innerHTML = '<div class="empty-state">No events in this session</div>';
+      return;
+    }
+
+    var html = "";
+    for (var i = 0; i < events.length; i++) {
+      var evt = events[i];
+      var payload = evt.payload || {};
+      var time = evt.at ? new Date(evt.at).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) : "";
+
+      switch (evt.type) {
+        case "user_message":
+          html += '<div class="event user_message">';
+          html += '<div class="event-header">[user] ' + escapeHtml(time) + '</div>';
+          html += '<div class="event-text">' + escapeHtml(payload.text || "") + '</div>';
+          html += '</div>';
+          break;
+
+        case "assistant_message":
+          html += '<div class="event assistant_message">';
+          html += '<div class="event-header">[assistant] ' + escapeHtml(time) + '</div>';
+          html += '<div class="event-text">' + escapeHtml(payload.text || "") + '</div>';
+          html += '</div>';
+          break;
+
+        case "tool_call":
+          html += '<div class="event tool_call">';
+          html += '<details>';
+          html += '<summary>tool_call: ' + escapeHtml(payload.tool || "unknown") + '</summary>';
+          html += '<pre>' + escapeHtml(tryPrettyJson(payload.arguments)) + '</pre>';
+          html += '</details>';
+          html += '</div>';
+          break;
+
+        case "tool_result":
+          html += '<div class="event tool_result">';
+          html += '<details>';
+          html += '<summary>tool_result: ' + escapeHtml(payload.tool || "unknown") + '</summary>';
+          if (payload.artifact_id) {
+            html += '<div><a class="artifact-link" data-artifact-id="' + escapeHtml(payload.artifact_id) + '" onclick="window._loadArtifact(this)">Load artifact ' + escapeHtml(truncate(payload.artifact_id, 16)) + '</a></div>';
+          }
+          if (payload.result) {
+            html += '<pre>' + escapeHtml(tryPrettyJson(payload.result)) + '</pre>';
+          }
+          html += '</details>';
+          html += '</div>';
+          break;
+
+        default:
+          html += '<div class="event" style="background:#1e1e2e;border-left:3px solid #4a4a6a;">';
+          html += '<div class="event-header">[' + escapeHtml(evt.type) + '] ' + escapeHtml(time) + '</div>';
+          html += '<pre>' + escapeHtml(tryPrettyJson(payload)) + '</pre>';
+          html += '</div>';
+          break;
+      }
+    }
+    container.innerHTML = html;
+  }
+
+  window._loadArtifact = function(el) {
+    var artifactId = el.getAttribute("data-artifact-id");
+    if (!artifactId) return;
+
+    el.textContent = "Loading...";
+    el.onclick = null;
+
+    fetch("/api/artifacts/" + encodeURIComponent(artifactId))
+      .then(function(res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function(data) {
+        var pre = document.createElement("pre");
+        pre.textContent = tryPrettyJson(data);
+        el.parentNode.replaceChild(pre, el);
+      })
+      .catch(function(err) {
+        el.textContent = "Failed to load artifact: " + err.message;
+        el.style.color = "#f87171";
+      });
+  };
+
+  window.refresh = function() {
+    loadSessions();
+    if (currentSessionId) {
+      loadEvents(currentSessionId);
+    }
+  };
+
+  // Initialize on page load
+  loadSessions();
+})();
+</script>
+</body>
+</html>

@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	ctxengine "github.com/user/gopherclaw/internal/context"
 	"github.com/user/gopherclaw/internal/gateway"
 	"github.com/user/gopherclaw/internal/types"
 )
@@ -16,23 +20,29 @@ const maxTelegramMessage = 4096
 
 // Adapter bridges Telegram to the gateway.
 type Adapter struct {
-	bot      *tgbotapi.BotAPI
-	gateway  *gateway.Gateway
-	events   types.EventStore
-	sessions types.SessionStore
+	bot       *tgbotapi.BotAPI
+	gateway   *gateway.Gateway
+	events    types.EventStore
+	sessions  types.SessionStore
+	engine     *ctxengine.Engine
+	toolNames  []string
+	memoryPath string
 }
 
 // New creates a Telegram adapter.
-func New(token string, gw *gateway.Gateway, events types.EventStore, sessions types.SessionStore) (*Adapter, error) {
+func New(token string, gw *gateway.Gateway, events types.EventStore, sessions types.SessionStore, engine *ctxengine.Engine, toolNames []string, memoryPath string) (*Adapter, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, fmt.Errorf("create bot: %w", err)
 	}
 	return &Adapter{
-		bot:      bot,
-		gateway:  gw,
-		events:   events,
-		sessions: sessions,
+		bot:        bot,
+		gateway:    gw,
+		events:     events,
+		sessions:   sessions,
+		engine:     engine,
+		toolNames:  toolNames,
+		memoryPath: memoryPath,
 	}, nil
 }
 
@@ -65,6 +75,11 @@ func (a *Adapter) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	chatID := msg.Chat.ID
+
+	// Start typing indicator and keep it alive until processing completes.
+	typingCtx, stopTyping := context.WithCancel(ctx)
+	go a.sendTyping(typingCtx, chatID)
+
 	event := &types.InboundEvent{
 		Source:     "telegram",
 		SessionKey: buildSessionKey(msg.From.ID, msg.Chat.ID),
@@ -73,6 +88,7 @@ func (a *Adapter) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 
 	err := a.gateway.HandleInbound(ctx, event, gateway.WithOnComplete(func(response string) {
+		stopTyping()
 		a.sendResponse(chatID, response)
 	}))
 	if err != nil {
@@ -90,15 +106,16 @@ func (a *Adapter) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 
 	case "new":
 		key := buildSessionKey(msg.From.ID, msg.Chat.ID)
-		sid, err := a.sessions.ResolveOrCreate(ctx, key, "default")
-		if err == nil {
-			session, err := a.sessions.Get(ctx, sid)
-			if err == nil {
-				session.Status = "archived"
-				a.sessions.Update(ctx, session)
-			}
+		oldSID, err := a.sessions.Rotate(ctx, key)
+		if err != nil {
+			a.sendResponse(chatID, "Error creating new session.")
+			return
 		}
-		a.sendResponse(chatID, "Starting a new session. Previous conversation has been archived.")
+		if oldSID == "" {
+			a.sendResponse(chatID, "No existing session. Send a message to start one.")
+		} else {
+			a.sendResponse(chatID, "New session started. Previous conversation has been archived.")
+		}
 
 	case "status":
 		key := buildSessionKey(msg.From.ID, msg.Chat.ID)
@@ -114,8 +131,52 @@ func (a *Adapter) handleCommand(ctx context.Context, msg *tgbotapi.Message) {
 		}
 		a.sendResponse(chatID, fmt.Sprintf("Session: %s\nMessages: %d", sid, count))
 
+	case "context":
+		key := buildSessionKey(msg.From.ID, msg.Chat.ID)
+		sid, err := a.sessions.ResolveOrCreate(ctx, key, "default")
+		if err != nil {
+			a.sendResponse(chatID, "Error fetching session.")
+			return
+		}
+		session, err := a.sessions.Get(ctx, sid)
+		if err != nil {
+			a.sendResponse(chatID, "Error fetching session.")
+			return
+		}
+		events, err := a.events.Tail(ctx, sid, 100)
+		if err != nil {
+			a.sendResponse(chatID, "Error loading events.")
+			return
+		}
+		summary := a.engine.Summarize(session, events, a.toolNames)
+		text := fmt.Sprintf("```\nContext Budget:\n"+
+			"  Max tokens:      %d\n"+
+			"  Output reserve:  %d\n"+
+			"  Input budget:    %d\n\n"+
+			"System Prompt:     %d tokens\n"+
+			"Event History:     %d / %d tokens (%d of %d events)\n"+
+			"Remaining:         %d tokens\n"+
+			"```\n\n*System Prompt:*\n```\n%s\n```",
+			summary.MaxTokens,
+			summary.Reserve,
+			summary.InputBudget,
+			summary.SystemPromptTokens,
+			summary.EventTokensUsed, summary.EventBudget, summary.EventsIncluded, summary.EventsTotal,
+			summary.BudgetRemaining,
+			summary.SystemPromptText,
+		)
+		a.sendResponse(chatID, text)
+
+	case "memories":
+		data, err := os.ReadFile(a.memoryPath)
+		if err != nil || strings.TrimSpace(string(data)) == "" {
+			a.sendResponse(chatID, "No memories stored yet.")
+			return
+		}
+		a.sendResponse(chatID, fmt.Sprintf("*Stored Memories:*\n```\n%s```", string(data)))
+
 	default:
-		a.sendResponse(chatID, "Unknown command. Available: /start, /new, /status")
+		a.sendResponse(chatID, "Unknown command. Available: /start, /new, /status, /context, /memories")
 	}
 }
 
@@ -132,6 +193,41 @@ func (a *Adapter) sendResponse(chatID int64, text string) {
 			}
 		}
 	}
+}
+
+// sendTyping sends "typing..." indicator every 4 seconds until ctx is cancelled.
+func (a *Adapter) sendTyping(ctx context.Context, chatID int64) {
+	action := tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping)
+	a.bot.Send(action)
+
+	ticker := time.NewTicker(4 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.bot.Send(action)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// SendTo delivers a message to a Telegram chat identified by session key.
+// Session key format: "telegram:<userID>:<chatID>"
+func (a *Adapter) SendTo(sessionKey, message string) error {
+	parts := strings.Split(sessionKey, ":")
+	if len(parts) != 3 || parts[0] != "telegram" {
+		return fmt.Errorf("invalid telegram session key: %s", sessionKey)
+	}
+	chatID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse chat ID: %w", err)
+	}
+	if message == "" {
+		return nil // bot decided not to respond
+	}
+	a.sendResponse(chatID, message)
+	return nil
 }
 
 func splitMessage(text string) []string {

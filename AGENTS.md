@@ -9,17 +9,23 @@ A Go assistant runtime that receives messages (from Telegram or automations), ro
 ## Package dependency graph
 
 ```
-cmd/gopherclaw/main.go
-  ├── internal/config      (config loading)
-  ├── internal/gateway      (orchestration)
-  │     └── internal/types  (interfaces)
-  ├── internal/state        (storage implementations)
-  │     └── internal/types  (interfaces, models)
-  └── pkg/llm              (LLM provider - not yet wired to gateway)
-        └── pkg/llm/openai (OpenAI client)
+cmd/gopherclaw/
+  ├── internal/config         (config loading, get/set, flatten)
+  ├── internal/gateway        (orchestration, queue)
+  │     └── internal/types    (interfaces)
+  ├── internal/state          (storage: session, event, artifact, task)
+  │     └── internal/types    (interfaces, models)
+  ├── internal/runtime        (agentic turn loop, tool registry)
+  │     ├── internal/runtime/tools  (bash, brave_search, read_url, memory_*)
+  │     ├── internal/context  (token-budgeted prompt builder)
+  │     └── pkg/llm           (LLM provider)
+  ├── internal/telegram       (Telegram bot adapter)
+  ├── internal/webhook        (HTTP server: debug UI, API, webhooks)
+  ├── internal/scheduler      (cron-based task scheduler)
+  └── internal/delivery       (response routing by session key prefix)
 ```
 
-No circular dependencies. `internal/types` is the shared contract layer. `internal/state` implements storage. `internal/gateway` consumes storage via interfaces.
+No circular dependencies. `internal/types` is the shared contract layer. `internal/state` implements storage. `internal/gateway` consumes storage via interfaces. `internal/runtime` wires the LLM turn loop into the gateway's queue processor.
 
 ## How to navigate
 
@@ -40,6 +46,26 @@ No circular dependencies. `internal/types` is the shared contract layer. `intern
 **"Where is the LLM client?"** → `pkg/llm/openai/client.go` (OpenAI-compatible)
 
 **"Where is config?"** → `internal/config/config.go` (Load with defaults → file → env)
+
+**"Where is the runtime?"** → `internal/runtime/runtime.go` (ProcessRun agentic turn loop)
+
+**"Where are the tools?"** → `internal/runtime/tools/` (bash.go, brave.go, readurl.go, memory.go)
+
+**"Where is the context engine?"** → `internal/context/engine.go` (token-budgeted prompt builder)
+
+**"Where is the system prompt?"** → `internal/context/prompt.go` (DefaultPrompt template)
+
+**"Where is the Telegram adapter?"** → `internal/telegram/adapter.go` (long polling, commands)
+
+**"Where is the HTTP server?"** → `internal/webhook/server.go` (debug UI, API, webhooks)
+
+**"Where is the debug UI?"** → `internal/webhook/static/index.html` (embedded via `//go:embed`)
+
+**"Where is the scheduler?"** → `internal/scheduler/scheduler.go` (cron-based task firing)
+
+**"Where is delivery routing?"** → `internal/delivery/registry.go` (prefix-based response routing)
+
+**"Where are CLI commands?"** → `cmd/gopherclaw/cmd_*.go` (serve, config, session, task, setup, lifecycle)
 
 **"Where is main?"** → `cmd/gopherclaw/main.go`
 
@@ -100,24 +126,31 @@ Use `fmt.Errorf("context: %w", err)` for all error returns. This enables `errors
 
 ## What's implemented vs planned
 
-### Implemented (Phases 0-2)
+### Implemented (Phases 0-6)
 
 - All core types and IDs with UUID generation
-- Storage interfaces and filesystem implementations
+- Storage interfaces and filesystem implementations (session, event, artifact, task)
 - Gateway with per-session FIFO queue and global concurrency semaphore
 - Retry policy with exponential backoff (1s/2x/3 attempts/30s cap)
 - LLM provider interface with OpenAI-compatible client
-- Config loader with env override support
-- CLI entry point with graceful shutdown
-- 31 tests (30 unit + 1 integration)
+- Config loader with env override, CLI get/set, flatten/unflatten
+- Agentic turn loop runtime with tool execution and max-rounds handling
+- Tool registry with built-in tools: bash, brave_search, read_url, memory_save/delete/list
+- Token-budgeted context engine with tiktoken, history walkback, memory injection
+- Customizable system prompt template
+- Telegram adapter with long polling, typing indicators, message splitting
+- Telegram commands: /start, /new, /status, /context, /memories
+- CLI commands: serve, stop, restart, config (list/get/set), session (list/clear), task (add/list/remove/enable/disable), setup wizard
+- Graceful shutdown (SIGINT/SIGTERM) and restart (SIGHUP with in-flight request draining)
+- PID file management
+- Cron-based task scheduler with delivery routing
+- HTTP webhook server (ad-hoc and named task endpoints)
+- Debug web UI with session list, event viewer, artifact loading (embedded HTML via `//go:embed`)
+- JSON API: /api/sessions, /api/sessions/{id}/events, /api/artifacts/{id}
 
-### Not yet implemented (Phases 3-7)
+### Not yet implemented (Phase 7)
 
-- **Runtime** (Phase 3): LLM turn loop, tool execution, tool registry, digest + artifact persistence during runs. The gateway's `Queue.processor` is currently set externally — Phase 3 will wire in the real runtime.
-- **Context engine** (Phase 4): Token-budgeted prompt assembly from agent memory, recent events, tool digests, artifact excerpts. The `ContextManager` interface from the design doc is not yet coded.
-- **Telegram adapter** (Phase 5): Convert Telegram updates to `InboundEvent`, send responses back, handle `/status`, `/new`, `/reset`, `/compact` commands.
-- **Automations** (Phase 6): Internal scheduler emitting trigger events into the gateway queue. `AutomationID` type exists but no store or scheduler yet.
-- **Hardening** (Phase 7): Structured logging, metrics, startup recovery, graceful queue draining, integration tests.
+- **Hardening**: Structured logging improvements, metrics/telemetry, startup recovery, packaging
 
 ## Known technical debt
 
@@ -133,5 +166,11 @@ Use `fmt.Errorf("context: %w", err)` for all error returns. This enables `errors
 
 - `docs/plans/2024-11-21-phases-0-2-design.md` — Architecture decisions, data models, context engineering strategy
 - `docs/plans/2024-11-21-phases-0-2-implementation.md` — Task-by-task implementation plan with code
+- `docs/plans/2026-02-22-phases-3-5-design.md` — Runtime, context engine, Telegram adapter design
+- `docs/plans/2026-02-22-phases-3-5-implementation.md` — Phases 3-5 implementation plan
+- `docs/plans/2026-02-22-cli-commands-design.md` — CLI commands design
+- `docs/plans/2026-02-22-cli-commands-implementation.md` — CLI commands implementation plan
+- `docs/plans/2026-02-25-debug-web-ui-design.md` — Debug web UI design
+- `docs/plans/2026-02-25-debug-web-ui-implementation.md` — Debug web UI implementation plan
 
-Read the design doc first for the full vision including context engineering (the primary differentiator), run lifecycle, and the automation model.
+Read the original design doc first for the full vision including context engineering (the primary differentiator), run lifecycle, and the automation model.
